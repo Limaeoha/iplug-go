@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package samples;
+
+message SamplePacket {
+  optional int32 nFrames = 1;
+  optional int32 nChans = 2;
+  optional int32 sampleRate = 3;
+
+  message Channel {
+    repeated double samples = 1;
+  }
+
+  repeated Channel channels = 4;
+}
