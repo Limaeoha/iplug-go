@@ -3,66 +3,89 @@
 #include "IControls.h"
 #include "gen/proto/samples.pb.h"
 
-#include <stdio.h>
-#include <sys/socket.h>
 #include <iostream>
-#include <unistd.h>
-#include <stdlib.h>
-#include <strings.h>
-#include <sys/types.h>
+#include <fstream>
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
 #include <unistd.h>
-
-
 
 #define READ 0
 #define WRITE 1
 
-pid_t popen2(const char *command, int *infp, int *outfp) {
-  int p_stdin[2], p_stdout[2];
+pid_t popen2(const char *command, char * dir) {
   pid_t pid;
-
-  if (pipe(p_stdin) != 0 || pipe(p_stdout) != 0)
-    return -1;
+  
+  printf("forking\n");
 
   pid = fork();
-  if (pid < 0)
+  if (pid < 0) {
+    printf("unable to fork\n");
     return pid;
-  else if (pid == 0)
-  {
-    close(p_stdin[WRITE]);
-    dup2(p_stdin[READ], READ);
-    close(p_stdout[READ]);
-    dup2(p_stdout[WRITE], WRITE);
-    execl("/bin/sh", "sh", "-c", command, NULL);
-    perror("execl");
-    exit(1);
   }
 
-  if (infp == NULL)
-    close(p_stdin[WRITE]);
-  else
-    *infp = p_stdin[WRITE];
-  if (outfp == NULL)
-    close(p_stdout[READ]);
-  else
-    *outfp = p_stdout[READ];
+  // pid of 0 means child
+  if (pid == 0) {
+    printf("child\n");
+//    execl("/bin/sh", "sh", "-c", command, dir, NULL);
+    execl(command, dir, NULL);
+    throw "couldn't start child process";
+  }
+  printf("parent\n");
   return pid;
 }
 
-int infp, outfp;
+int sendfp, returnfp;
 char *buf = (char*)calloc(128, sizeof(char));
 
+std::ifstream returnS;
+std::ofstream sendS;
+
+
 int startServer() {
-  int pid =  popen2("/Users/ianlozinski/code/iPlug2/Examples/Delay2/echo/echo", &infp, &outfp);
-  if (pid != 0) {
-    printf("child pid: %d\n", pid);
+  char dir[15];
+  strcpy(dir, "/tmp/delay.XXXXXX");
+
+  mkdtemp(dir);
+  
+  if (mkfifo(String(dir) + "/send", 0666) != 0) {
+    std::cout << "couldn't create fifo";
+    return 1;
   }
-  printf("parent");
-  return 0;
+  
+  if (mkfifo(String(dir) + "/return", 0666) != 0) {
+    std::cout << "couldn't create fifo";
+    return 1;
+  }
+  
+  std::cout << dir;
+  std::cout << "\ncreated the fifos probably\n";
+  
+  sendS.open(String(dir) + "/send", std::ofstream::out);
+  if (!sendS.is_open() ){
+      std::cout << " error : cannot open file " << std :: endl;
+      return 1;
+  }
+  
+  returnS.open(String(dir) + "/return", std::ifstream::in);
+  if (!returnS.is_open()) {
+    std::cout << " error : cannot open file " << std :: endl;
+        return 1;
+  }
+  
+//  printf("opening send fifo...");
+//  sendfp = open(String(dir) + "/send", O_WRONLY );
+//  printf("ok\n");
+//  printf("opening return fifo...");
+//  returnfp = open(String(dir) + "/return", O_RDONLY);
+//  printf("ok\n");
+  return popen2("/Users/ianlozinski/code/iPlug2/Examples/Delay2/echo/echo", dir);
 }
 
 
@@ -74,10 +97,8 @@ Delay2::Delay2(const InstanceInfo& info)
   GetParam(kPan) -> InitDouble("Pan", 0., -1, 1, 0.01, "%");
   startServer();
 
-
 #if IPLUG_EDITOR // http://bit.ly/2S64BDd
   mMakeGraphicsFunc = [&]() {
-//    return MakeGraphics(*this, PLUG_WIDTH, PLUG_HEIGHT, PLUG_FPS, GetScaleForScreen(PLUG_HEIGHT));
     IGraphicsMac* pGraphics = new IGraphicsMac(*this, PLUG_WIDTH, PLUG_HEIGHT, PLUG_FPS, GetScaleForScreen(PLUG_HEIGHT));
       pGraphics->SetBundleID(BUNDLE_ID);
       pGraphics->SetSharedResourcesSubPath(SHARED_RESOURCES_SUBPATH);
@@ -123,18 +144,17 @@ void Delay2::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
   // write size of outgoing message
   size_t messageSize = packet.ByteSizeLong();
-  write(infp, &messageSize, sizeof(messageSize));
+  write(sendfp, &messageSize, sizeof(messageSize));
   
- 
   // write outoging message
-  packet.SerializeToFileDescriptor(infp);
+  packet.SerializeToFileDescriptor(sendfp);
   packet.Clear();
 
   // read incoming message size
-  read(outfp, &messageSize, sizeof(messageSize));
+  read(returnfp, &messageSize, sizeof(messageSize));
   
   // read incoming message
-  read(outfp, buffer, messageSize);
+  read(returnfp, buffer, messageSize);
   packet.ParseFromArray(buffer, messageSize);
 
   for (int c = 0; c < packet.channels_size(); c++) {

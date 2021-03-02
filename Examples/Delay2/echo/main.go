@@ -24,6 +24,9 @@ func init() {
 var p SamplePacket
 
 func main() {
+	log.Println("hi")
+	fmt.Println("hello, here are args:", os.Args)
+
 	delay := makeDelay(55*time.Millisecond, 0.5)
 	for {
 		var size uint64
